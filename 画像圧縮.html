@@ -174,48 +174,58 @@ async function compress(file, targetKB) {
   const isPNG = file.type === 'image/png';
   const origKB = Math.round(file.size / 1024);
   const targetBytes = targetKB * 1024;
+  const outExt = isPNG ? 'png' : 'jpg';
 
   // 元ファイルがすでに目標以下なら再エンコードせずそのまま返す
   if (file.size <= targetBytes) {
-    return { blob: file, origKB, outKB: origKB, outExt: isPNG ? 'png' : 'jpg' };
+    return { blob: file, origKB, outKB: origKB, outExt };
   }
 
   const img = await loadImage(file);
-  const canvas = document.createElement('canvas');
-  canvas.width = img.width;
-  canvas.height = img.height;
-  canvas.getContext('2d').drawImage(img, 0, 0);
+  let best = null;
 
-  // PNG → canvas再描画後も目標以下ならPNGのまま返す
   if (isPNG) {
-    const blob = await toBlob(canvas, 1, 'image/png');
-    if (blob.size <= targetBytes) {
-      return { blob, origKB, outKB: Math.round(blob.size / 1024), outExt: 'png' };
+    // PNG: qualityパラメータが無効なため寸法縮小のみ
+    // スケールを二分探索して目標以下の最大スケール（＝最高解像度）を探す
+    const minBlob = await toBlob(makeCanvas(img, 0.1), 1, 'image/png');
+    if (minBlob.size <= targetBytes) {
+      let lo = 0.1, hi = 1.0;
+      best = minBlob;
+      for (let i = 0; i < 16; i++) {
+        const mid = (lo + hi) / 2;
+        const blob = await toBlob(makeCanvas(img, mid), 1, 'image/png');
+        if (blob.size <= targetBytes) { best = blob; lo = mid; }
+        else { hi = mid; }
+      }
     }
-  }
+  } else {
+    // JPEG: フルサイズで品質二分探索（0.01〜1.0）
+    best = await binarySearchQuality(makeCanvas(img, 1.0), targetBytes);
 
-  // JPEG品質二分探索（フルサイズ、quality 0.01〜1.0 で目標に最接近）
-  // PNG超過時もJPEGに変換して圧縮（PNGはquality無効なのでJPEG変換が必要）
-  let best = await binarySearchQuality(canvas, targetBytes);
-
-  // ダメなら寸法縮小 + 品質二分探索の組み合わせ
-  if (!best) {
-    for (const scale of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]) {
-      const c2 = document.createElement('canvas');
-      c2.width = Math.round(img.width * scale);
-      c2.height = Math.round(img.height * scale);
-      c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
-      best = await binarySearchQuality(c2, targetBytes);
-      if (best) break;
+    // quality 0.01 でも目標超えなら寸法縮小 + 品質二分探索
+    if (!best) {
+      for (const scale of [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]) {
+        best = await binarySearchQuality(makeCanvas(img, scale), targetBytes);
+        if (best) break;
+      }
     }
   }
 
   if (!best) throw new Error('目標サイズに圧縮できませんでした');
-  return { blob: best, origKB, outKB: Math.round(best.size / 1024), outExt: 'jpg' };
+  return { blob: best, origKB, outKB: Math.round(best.size / 1024), outExt };
+}
+
+// 指定スケールのキャンバスを生成するヘルパー
+function makeCanvas(img, scale) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(img.width * scale);
+  canvas.height = Math.round(img.height * scale);
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return canvas;
 }
 
 // 指定キャンバスでJPEG品質を二分探索し、目標バイト以下の最高品質blobを返す
-// 最低品質(0.01)でも超える場合は null を返す
+// quality 0.01 でも超える場合は null を返す
 async function binarySearchQuality(canvas, targetBytes) {
   const minBlob = await toBlob(canvas, 0.01, 'image/jpeg');
   if (minBlob.size > targetBytes) return null;
