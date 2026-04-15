@@ -215,7 +215,7 @@ async function binarySearchQuality(canvas, targetBytes) {
   const minBlob = await toBlob(canvas, 0.01, 'image/jpeg');
   if (minBlob.size > targetBytes) return null;
 
-  let lo = 0.01, hi = 0.92, best = minBlob;
+  let lo = 0.01, hi = 0.99, best = minBlob;
   for (let i = 0; i < 16; i++) {
     const mid = (lo + hi) / 2;
     const blob = await toBlob(canvas, mid, 'image/jpeg');
