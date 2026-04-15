@@ -173,15 +173,20 @@ runBtn.addEventListener('click', async () => {
 async function compress(file, targetKB) {
   const isPNG = file.type === 'image/png';
   const origKB = Math.round(file.size / 1024);
-  const img = await loadImage(file);
   const targetBytes = targetKB * 1024;
 
+  // 元ファイルがすでに目標以下なら再エンコードせずそのまま返す
+  if (file.size <= targetBytes) {
+    return { blob: file, origKB, outKB: origKB, outExt: isPNG ? 'png' : 'jpg' };
+  }
+
+  const img = await loadImage(file);
   const canvas = document.createElement('canvas');
   canvas.width = img.width;
   canvas.height = img.height;
   canvas.getContext('2d').drawImage(img, 0, 0);
 
-  // PNGの場合: そのままで目標以下なら変換不要
+  // PNG → canvas再描画後も目標以下ならPNGのまま返す
   if (isPNG) {
     const blob = await toBlob(canvas, 1, 'image/png');
     if (blob.size <= targetBytes) {
@@ -189,7 +194,7 @@ async function compress(file, targetKB) {
     }
   }
 
-  // JPEG品質二分探索（フルサイズ）
+  // JPEG品質二分探索（フルサイズ、quality 0.01〜1.0 で目標に最接近）
   // PNG超過時もJPEGに変換して圧縮（PNGはquality無効なのでJPEG変換が必要）
   let best = await binarySearchQuality(canvas, targetBytes);
 
@@ -215,7 +220,7 @@ async function binarySearchQuality(canvas, targetBytes) {
   const minBlob = await toBlob(canvas, 0.01, 'image/jpeg');
   if (minBlob.size > targetBytes) return null;
 
-  let lo = 0.01, hi = 0.99, best = minBlob;
+  let lo = 0.01, hi = 1.0, best = minBlob;
   for (let i = 0; i < 16; i++) {
     const mid = (lo + hi) / 2;
     const blob = await toBlob(canvas, mid, 'image/jpeg');
