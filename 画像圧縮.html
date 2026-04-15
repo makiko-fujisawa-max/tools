@@ -149,8 +149,8 @@ runBtn.addEventListener('click', async () => {
     resultsDiv.appendChild(item);
 
     try {
-      const { blob, origKB, outKB } = await compress(file, targetKB);
-      const outName = file.name.replace(/\.(jpe?g|png|webp)$/i, '_compressed.jpg');
+      const { blob, origKB, outKB, outExt } = await compress(file, targetKB);
+      const outName = file.name.replace(/\.(jpe?g|png|webp)$/i, `_compressed.${outExt}`);
       item.querySelector('.result-size').innerHTML =
         `${origKB} KB → <span class="after">${outKB} KB</span>`;
       const dlBtn = document.createElement('button');
@@ -171,6 +171,10 @@ runBtn.addEventListener('click', async () => {
 });
 
 async function compress(file, targetKB) {
+  const isPNG = file.type === 'image/png';
+  const mime = isPNG ? 'image/png' : 'image/jpeg';
+  const outExt = isPNG ? 'png' : 'jpg';
+
   const origKB = Math.round(file.size / 1024);
   const img = await loadImage(file);
   const canvas = document.createElement('canvas');
@@ -180,35 +184,39 @@ async function compress(file, targetKB) {
 
   const targetBytes = targetKB * 1024;
 
-  // すでに目標以下なら品質0.92でそのまま変換
-  let blob = await toBlob(canvas, 0.92);
+  // すでに目標以下なら品質0.92でそのまま変換（PNGは品質パラメータ無視）
+  let blob = await toBlob(canvas, 0.92, mime);
   if (blob.size <= targetBytes) {
-    return { blob, origKB, outKB: Math.round(blob.size / 1024) };
+    return { blob, origKB, outKB: Math.round(blob.size / 1024), outExt };
   }
 
-  // 二分探索で最適品質を探す
-  let lo = 0.01, hi = 0.92, best = null;
-  for (let i = 0; i < 16; i++) {
-    const mid = (lo + hi) / 2;
-    blob = await toBlob(canvas, mid);
-    if (blob.size <= targetBytes) { best = blob; lo = mid; }
-    else { hi = mid; }
+  let best = null;
+
+  if (!isPNG) {
+    // JPEG: 二分探索で最適品質を探す
+    let lo = 0.01, hi = 0.92;
+    for (let i = 0; i < 16; i++) {
+      const mid = (lo + hi) / 2;
+      blob = await toBlob(canvas, mid, mime);
+      if (blob.size <= targetBytes) { best = blob; lo = mid; }
+      else { hi = mid; }
+    }
   }
 
-  // それでも無理なら寸法を縮小
+  // それでも無理なら寸法を縮小（PNG はここから開始）
   if (!best) {
     for (const scale of [0.8, 0.6, 0.5, 0.4, 0.3]) {
       const c2 = document.createElement('canvas');
       c2.width = Math.round(img.width * scale);
       c2.height = Math.round(img.height * scale);
       c2.getContext('2d').drawImage(img, 0, 0, c2.width, c2.height);
-      blob = await toBlob(c2, 0.7);
+      blob = await toBlob(c2, 0.7, mime);
       if (blob.size <= targetBytes) { best = blob; break; }
     }
   }
 
   if (!best) throw new Error('目標サイズに圧縮できませんでした');
-  return { blob: best, origKB, outKB: Math.round(best.size / 1024) };
+  return { blob: best, origKB, outKB: Math.round(best.size / 1024), outExt };
 }
 
 function loadImage(file) {
@@ -221,8 +229,8 @@ function loadImage(file) {
   });
 }
 
-function toBlob(canvas, quality) {
-  return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+function toBlob(canvas, quality, mime = 'image/jpeg') {
+  return new Promise(resolve => canvas.toBlob(resolve, mime, quality));
 }
 
 function download(blob, name) {
