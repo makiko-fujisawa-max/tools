@@ -186,10 +186,15 @@ async function compress(file, targetKB) {
 
   if (isPNG) {
     // PNG: qualityパラメータが無効なため寸法縮小のみ
-    // スケールを二分探索して目標以下の最大スケール（＝最高解像度）を探す
-    const minBlob = await toBlob(makeCanvas(img, 0.1), 1, 'image/png');
+    // 最小スケールを動的に探す（超大型画像でも1段階で目標サイズに到達できるよう対応）
+    let minScale = 0.1;
+    let minBlob = await toBlob(makeCanvas(img, minScale), 1, 'image/png');
+    while (minBlob.size > targetBytes && minScale > 0.005) {
+      minScale *= 0.5;
+      minBlob = await toBlob(makeCanvas(img, minScale), 1, 'image/png');
+    }
     if (minBlob.size <= targetBytes) {
-      let lo = 0.1, hi = 1.0;
+      let lo = minScale, hi = 1.0;
       best = minBlob;
       for (let i = 0; i < 16; i++) {
         const mid = (lo + hi) / 2;
